@@ -1,0 +1,19 @@
+# Ignored files
+*.class
+*.jar
+*.lst
+*/target/
+*.idea/
+*.iml
+*/target/*
+.idea/workspace.xml
+/bin/
+/WebContent/
+.DS_Store
+.project
+sm-admin/.project
+./.project
+**/bin
+**/build
+**/.settings
+**/.classpath
