@@ -1,7 +1,8 @@
 package com.example.springSecurity.configuration;
 
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,19 +11,24 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.example.springSecurity.bean.enums.ApplicationRole.*;
 import static com.example.springSecurity.bean.enums.ApplicationPermission.*;
 
-@Slf4j
 @RequiredArgsConstructor
 @EnableGlobalMethodSecurity(prePostEnabled = true) // preAuthorize için kullanılıyor
 @EnableWebSecurity
@@ -34,55 +40,53 @@ public class SecurityConfiguration extends WebSecurityConfigurerAdapter {
 
     @Override
     protected void configure(HttpSecurity http) throws Exception {
-        // Login ve logout yok çünkü her requestte authenticate oluyoruz.
-        // In memory databasede çalışır ve default username -> user, password her proje ayağa kalkınca yenilenir.
+        // Login ve logout ayarlanır. Proje giriş yapıldığında session id ataması yapar.
+        // Logout olunana kadar session id ile doğrulamayı gerçekleştirir.
+        // session doğrulamasını istersek db ile istersekte in memory ile yapabiliriz.
+        // JSESSIONID -> session id adı
         http
-                /*
-                * Bilgi çalınmasını önlemek için csrf token verilir ve bu token ile doğrulama gerçekleşir.
-                * Browser gibi cookie tutan yapılar için uygundur.
-                * Postman Interceptor (Cookie tutmak için kullanılır.)
-                * */
-                //.csrf().disable()
 
-                /*
-                * Default name X-XSRF-TOKEN dır.
-                * Bu değeri header'a setleyerekte çalışılabilir.
-                * */
                 .csrf().disable()
                 //.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 //.and()
 
                 .authorizeRequests()
-                .antMatchers("/", "index", "/css/*", "/js/*")  // Gelen url patternler için auth isteme şeklinde belirttik.
-                .permitAll() // Tüm yetkiler için geçerli demek
-
-                // Buradaki örnek role based auth ve permission base auth için yapılmıştır.
-                // Ayrıca önce işleme giren kuralın gelen istekte geçerli olduğunu gösterir.
-                // Eğer yetkiye uymayan bir durum varsa 403 forbidden alınacaktır.
-                .antMatchers("api/v1/student/create")
-                .hasRole(MANAGER.name())
-
-                .antMatchers(HttpMethod.DELETE,"api/v1/student/**")
-                .hasAuthority(STUDENT_WRITE.getPermission())
-                .antMatchers(HttpMethod.PUT,"api/v1/student/**")
-                .hasAuthority(STUDENT_WRITE.getPermission())
-                .antMatchers("api/v1/student/**")
-                .hasAnyRole(MANAGER.name(), TEACHER.name())
-                .antMatchers(HttpMethod.GET, "api/v1/student/**")
-                .hasAuthority(STUDENT_READ.getPermission())
-
-
+                .antMatchers("/", "index", "/css/*", "/js/*").permitAll()
+                .antMatchers("api/v1/student/create").hasRole(MANAGER.name())
+                .antMatchers(HttpMethod.DELETE,"api/v1/student/**").hasAuthority(STUDENT_WRITE.getPermission())
+                .antMatchers(HttpMethod.PUT,"api/v1/student/**").hasAuthority(STUDENT_WRITE.getPermission())
+                .antMatchers("api/v1/student/**").hasAnyRole(MANAGER.name(), TEACHER.name())
                 .anyRequest()
                 .authenticated()
                 .and()
-                .httpBasic();
+                .formLogin()
+                    // default bu şekilde çalışır. Burayı elle doldurursak kendi sayfamıza yönlenirme yapmış oluruz.
+                    .loginPage("/login").permitAll()
+                    .defaultSuccessUrl("/courses", true) // redirect here if auth ok
+                    .usernameParameter("username")
+                    .passwordParameter("password")
+                .and()
+                // Sessionın ne kadar süreli açık kalmasını istediğimi belirtiyoruz.
+                // remember-me default cookie name for token
+                .rememberMe()
+                    .rememberMeParameter("remember-me") // formun üzerindeki parametrenin adı
+                    .rememberMeCookieName("remember-me") // default
+                    .tokenValiditySeconds((int) TimeUnit.DAYS.toSeconds(21))
+                    .key("verySecured")
+                .and()
+                .logout()
+                    .logoutUrl("/logout")
+                    .logoutRequestMatcher(new AntPathRequestMatcher("/logout", "GET")) // Yalnızca get methodu ile logout ol.
+                    .clearAuthentication(true)
+                    .invalidateHttpSession(true)
+                    .deleteCookies("JSESSIONID", "remember-me")
+                    .logoutSuccessUrl("/login");
     }
 
     @Bean
     @Override
     protected UserDetailsService userDetailsService() {
-        // ROLE ve permission birbirinden ayrı şeyler. permissionların birlikteliği role'u tanımlar.
-        UserDetailsService service = new InMemoryUserDetailsManager(
+        return new InMemoryUserDetailsManager(
                 User.builder().username("anna")
                         .password(passwordEncoder.encode("password"))
                         .roles(MANAGER.name())
@@ -105,9 +109,5 @@ public class SecurityConfiguration extends WebSecurityConfigurerAdapter {
                         .authorities(STUDENT.getPermissions())
                         .build()
         );
-        service.loadUserByUsername("anna")
-                .getAuthorities()
-                .forEach(a -> log.info(a.getAuthority()));
-        return service;
     }
 }
